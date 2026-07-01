@@ -12,6 +12,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
   push:
+    branches: [main]
     paths-ignore:
       - '**/*.md'
       - docs/**
@@ -55,7 +56,7 @@ jobs:
           image_name: ${{ steps.detect.outputs.image_name }}
 
       - name: Staging release
-        if: (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: magmamoose/diatreme@f31adec7d62907cc81b9b880cd776e24fcdcbaf1 # v2.0.0
         with:
           mode: release
