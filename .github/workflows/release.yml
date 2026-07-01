@@ -1,18 +1,20 @@
 name: Release
 
-# Diatreme trunk-based release workflow for platform1-systems.
+# Diatreme branch-based release workflow for platform1-systems.
 #
 # Environment flow:
 #   1. Pull requests run Diatreme CI for image repositories.
-#   2. Default-branch pushes release to staging as an rc prerelease.
-#   3. Diatreme opens/refreshes a promote/prod/* PR.
-#   4. Merging that promotion PR cuts the stable prod release.
+#   2. Pushes to staging release rc prereleases.
+#   3. Pushes to main release stable prod versions.
+#
+# Image repositories are detected from docker-bake.hcl only; the image name
+# passed to Diatreme is derived from the first Bake tag, not the repo name.
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened]
   push:
-    branches: [main]
+    branches: [staging, main]
     paths-ignore:
       - '**/*.md'
       - docs/**
@@ -42,11 +44,32 @@ jobs:
       - id: detect
         shell: bash
         run: |
-          if [ -f docker-bake.hcl ] || [ -f Dockerfile ]; then
-            echo "image_name=${{ github.event.repository.name }}" >> "$GITHUB_OUTPUT"
-          else
+          if [ ! -f docker-bake.hcl ]; then
             echo "image_name=" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          if ! bake_json="$(docker buildx bake -f docker-bake.hcl default --print)"; then
+            echo "::error::failed to evaluate docker-bake.hcl 'default' target"
+            exit 1
+          fi
+          first_tag="$(jq -r '[.target[]?.tags[]? | select(. != "")][0] // ""' <<< "$bake_json")"
+          if [ -z "$first_tag" ]; then
+            echo "::error::docker-bake.hcl does not define any target tags"
+            exit 1
+          fi
+
+          # Diatreme wants the image name without registry or owner. Bake
+          # remains the source of truth; this just adapts its first tag to
+          # Diatreme's input shape.
+          image_ref="${first_tag%%@*}"
+          image_ref="${image_ref%:*}"
+          image_path="${image_ref#*/}"
+          owner_lc="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          owner_prefix="${owner_lc}/"
+          image_name="${image_path#"$owner_prefix"}"
+          image_name="${image_name##*/}"
+          echo "image_name=${image_name}" >> "$GITHUB_OUTPUT"
 
       - name: PR image build
         if: github.event_name == 'pull_request' && github.event.action != 'closed' && steps.detect.outputs.image_name != ''
@@ -55,29 +78,14 @@ jobs:
           mode: ci
           image_name: ${{ steps.detect.outputs.image_name }}
 
-      - name: Staging release
+      - name: Release
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: magmamoose/diatreme@f31adec7d62907cc81b9b880cd776e24fcdcbaf1 # v2.0.0
         with:
           mode: release
-          deployment-model: tbd-pr
+          deployment-model: bbd
           versioning-tool: gitversion
-          environment: staging
+          branch-map: '{"staging": "staging", "main": "prod"}'
           environments: '["staging", "prod"]'
           prerelease-identifiers: '{"staging": "rc"}'
-          promote-target-branch: ${{ github.event.repository.default_branch }}
-          create-promotion-pr: 'true'
-          image_name: ${{ steps.detect.outputs.image_name }}
-
-      - name: Production promotion release
-        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'promote/prod/')
-        uses: magmamoose/diatreme@f31adec7d62907cc81b9b880cd776e24fcdcbaf1 # v2.0.0
-        with:
-          mode: release
-          deployment-model: tbd-pr
-          versioning-tool: gitversion
-          environment: prod
-          environments: '["staging", "prod"]'
-          prerelease-identifiers: '{"staging": "rc"}'
-          promote-target-branch: ${{ github.event.repository.default_branch }}
           image_name: ${{ steps.detect.outputs.image_name }}
