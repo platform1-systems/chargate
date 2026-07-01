@@ -1,0 +1,30 @@
+# Org Chargate security gate (MegaLinter-backed, net-new PR-diff gating), consumed
+# as the Chargate MARKETPLACE ACTION. On PRs it gates on net-new findings; on push
+# to the default branch it runs a non-gating baseline scan and ships the full SARIF.
+#
+# DefectDojo and Dependency-Track are intentionally not wired for platform1-systems.
+name: Security
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+  actions: read
+  # Chargate uses OIDC to request a short-lived Chargate App token for PR
+  # comments. If the App is not installed, the action falls back to the
+  # workflow GITHUB_TOKEN.
+  id-token: write
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chargate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: magmamoose/chargate@699a2b0a62c9a1ecd41fa0295a9d27a9037ac30e # v2.3.0

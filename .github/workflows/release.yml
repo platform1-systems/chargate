@@ -1,0 +1,82 @@
+name: Release
+
+# Diatreme trunk-based release workflow for platform1-systems.
+#
+# Environment flow:
+#   1. Pull requests run Diatreme CI for image repositories.
+#   2. Default-branch pushes release to staging as an rc prerelease.
+#   3. Diatreme opens/refreshes a promote/prod/* PR.
+#   4. Merging that promotion PR cuts the stable prod release.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  push:
+    paths-ignore:
+      - '**/*.md'
+      - docs/**
+      - mkdocs.yml
+      - LICENSE
+      - .gitignore
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+  pull-requests: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  diatreme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        shell: bash
+        run: |
+          if [ -f docker-bake.hcl ] || [ -f Dockerfile ]; then
+            echo "image_name=${{ github.event.repository.name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "image_name=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: PR image build
+        if: github.event_name == 'pull_request' && github.event.action != 'closed' && steps.detect.outputs.image_name != ''
+        uses: magmamoose/diatreme@f31adec7d62907cc81b9b880cd776e24fcdcbaf1 # v2.0.0
+        with:
+          mode: ci
+          image_name: ${{ steps.detect.outputs.image_name }}
+
+      - name: Staging release
+        if: (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) || github.event_name == 'workflow_dispatch'
+        uses: magmamoose/diatreme@f31adec7d62907cc81b9b880cd776e24fcdcbaf1 # v2.0.0
+        with:
+          mode: release
+          deployment-model: tbd-pr
+          versioning-tool: gitversion
+          environment: staging
+          environments: '["staging", "prod"]'
+          prerelease-identifiers: '{"staging": "rc"}'
+          promote-target-branch: ${{ github.event.repository.default_branch }}
+          create-promotion-pr: 'true'
+          image_name: ${{ steps.detect.outputs.image_name }}
+
+      - name: Production promotion release
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'promote/prod/')
+        uses: magmamoose/diatreme@f31adec7d62907cc81b9b880cd776e24fcdcbaf1 # v2.0.0
+        with:
+          mode: release
+          deployment-model: tbd-pr
+          versioning-tool: gitversion
+          environment: prod
+          environments: '["staging", "prod"]'
+          prerelease-identifiers: '{"staging": "rc"}'
+          promote-target-branch: ${{ github.event.repository.default_branch }}
+          image_name: ${{ steps.detect.outputs.image_name }}
