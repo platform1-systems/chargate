@@ -1,14 +1,19 @@
 # Org Chargate security gate (MegaLinter-backed, net-new PR-diff gating), consumed
-# as the Chargate MARKETPLACE ACTION. On PRs it gates on net-new findings; on push
-# to the default branch it runs a non-gating baseline scan and ships the full SARIF.
+# as the Chargate MARKETPLACE ACTION. It gates on net-new findings on pull requests.
+#
+# Runs on `pull_request` only. The required `chargate` status check is produced on
+# the PR, so merging to the default branch does NOT need a second whole-repo scan of
+# already-gated code. Dropping the push trigger also stops every Diatreme release
+# commit (version bumps/tags pushed to main + staging) from kicking off a fresh
+# ~15-minute MegaLinter run — the single biggest GitHub Actions minute saver here.
+# Trade-off: the default-branch baseline SARIF is no longer refreshed on the GitHub
+# Security tab (which needs GHAS on private repos anyway); PR-time gating is retained.
 #
 # DefectDojo and Dependency-Track are intentionally not wired for platform1-systems.
 name: Security
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -26,6 +31,18 @@ concurrency:
 
 jobs:
   chargate:
-    runs-on: ubuntu-latest
+    # Skip the whole-repo scan on Dependabot PRs. This org's Dependabot only bumps
+    # pinned GitHub Actions SHAs, which effectively never introduce a net-new SARIF
+    # finding, so a full MegaLinter run is wasted minutes. A skipped required check
+    # still satisfies the ruleset, so Dependabot auto-merge is unaffected (Dependabot
+    # PRs also run with a read-only token, degrading the comment/OIDC paths anyway).
+    if: ${{ github.actor != 'dependabot[bot]' }}
+    # Per-repo runner toggle, shared with the release (Diatreme) workflow.
+    # Set the SELFHOSTED_GITHUB_RUNNER variable to a self-hosted runner label
+    # (e.g. platform1-infra -> "prod-cpt-aws") to route this repo's managed
+    # workflows to the cluster pool — free minutes and a warm MegaLinter image.
+    # Leave it unset/blank to stay on GitHub-hosted; blanking it is also the
+    # instant escape hatch if the self-hosted runners bomb out.
+    runs-on: ${{ vars.SELFHOSTED_GITHUB_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: magmamoose/chargate@57283fe8c62cf837e27196f1b419b13fdd16322c # v2.5.2
+      - uses: magmamoose/chargate@bd4f47034abf737510a4fe977b3650c76649b733 # v2.6.0
