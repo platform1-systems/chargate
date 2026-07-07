@@ -24,6 +24,13 @@ on:
       - LICENSE
       - .gitignore
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Force a bump (auto = let the tool decide)'
+        required: false
+        default: auto
+        type: choice
+        options: [auto, patch, minor, major]
 
 permissions:
   contents: write
@@ -61,3 +68,18 @@ jobs:
           branch-map: '{"staging": "staging", "main": "prod"}'
           environments: '["staging", "prod"]'
           prerelease-identifiers: '{"staging": "rc"}'
+          # Guard against promoting to prod from the wrong branch. Two layers:
+          #   1. deployment-model: bbd derives the environment from the BRANCH via
+          #      branch-map — there is no environment input to fat-finger, so a push
+          #      or manual dispatch from staging can only ever cut an rc; prod is
+          #      reachable only from main.
+          #   2. admin-required-from puts the prod environment (the last entry in
+          #      environments) behind the manual-release admin guardrail. This is
+          #      already the default (@last); pinned here to make the intent explicit.
+          admin-required-from: prod
+          # Manual bump lever for the workflow_dispatch "bump" input above. Map the
+          # `auto` sentinel — and every push/PR run, where the input is absent — to an
+          # empty string so Diatreme decides the bump from commits; patch/minor/major
+          # force that level. To force a staging rc bump, run this workflow from the
+          # `staging` branch ("Use workflow from" -> staging) with bump=patch|minor|major.
+          force-bump: ${{ github.event.inputs.bump != 'auto' && github.event.inputs.bump || '' }}
