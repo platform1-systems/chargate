@@ -55,13 +55,13 @@ jobs:
 
       - name: PR image build
         if: github.event_name == 'pull_request' && github.event.action != 'closed'
-        uses: magmamoose/diatreme@d60b0031ed3591e24d1a61f0e4d308ce50188828 # v2.4.4
+        uses: magmamoose/diatreme@0d79d15bc77ca581a5dc67313d5a1da687e700dd # v2.11.1
         with:
           mode: ci
 
       - name: Release
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        uses: magmamoose/diatreme@d60b0031ed3591e24d1a61f0e4d308ce50188828 # v2.4.4
+        uses: magmamoose/diatreme@0d79d15bc77ca581a5dc67313d5a1da687e700dd # v2.11.1
         with:
           mode: release
           deployment-model: bbd
