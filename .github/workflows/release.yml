@@ -1,0 +1,85 @@
+name: Release
+
+# Diatreme branch-based release workflow for platform1-systems.
+#
+# Environment flow:
+#   1. Pull requests run Diatreme CI (image repos build a pr-<N> image).
+#   2. Pushes to staging release rc prereleases.
+#   3. Pushes to main release stable prod versions.
+#
+# Diatreme (v2.3.0+) auto-detects image_name from docker-bake.hcl, so no manual
+# detection step is needed; a repo without a bake file runs versioning only. The
+# versioning tool is auto-detected too (semantic-release-python for pyproject.toml
+# [tool.semantic_release] repos), so it is not pinned here.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [staging, main]
+    paths-ignore:
+      - '**/*.md'
+      - docs/**
+      - mkdocs.yml
+      - LICENSE
+      - .gitignore
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Force a bump (auto = let the tool decide)'
+        required: false
+        default: auto
+        type: choice
+        options: [auto, patch, minor, major]
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+  pull-requests: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  diatreme:
+    # Shares the repo's SELFHOSTED_GITHUB_RUNNER toggle (see security.yml):
+    # set it to a self-hosted runner label to run releases on the cluster pool,
+    # unset/blank to stay on GitHub-hosted.
+    runs-on: ${{ vars.SELFHOSTED_GITHUB_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: PR image build
+        if: github.event_name == 'pull_request' && github.event.action != 'closed'
+        uses: magmamoose/diatreme@d60b0031ed3591e24d1a61f0e4d308ce50188828 # v2.4.4
+        with:
+          mode: ci
+
+      - name: Release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: magmamoose/diatreme@d60b0031ed3591e24d1a61f0e4d308ce50188828 # v2.4.4
+        with:
+          mode: release
+          deployment-model: bbd
+          branch-map: '{"staging": "staging", "main": "prod"}'
+          environments: '["staging", "prod"]'
+          prerelease-identifiers: '{"staging": "rc"}'
+          # Guard against promoting to prod from the wrong branch. Two layers:
+          #   1. deployment-model: bbd derives the environment from the BRANCH via
+          #      branch-map — there is no environment input to fat-finger, so a push
+          #      or manual dispatch from staging can only ever cut an rc; prod is
+          #      reachable only from main.
+          #   2. admin-required-from puts the prod environment (the last entry in
+          #      environments) behind the manual-release admin guardrail. This is
+          #      already the default (@last); pinned here to make the intent explicit.
+          admin-required-from: prod
+          # Manual bump lever for the workflow_dispatch "bump" input above. Map the
+          # `auto` sentinel — and every push/PR run, where the input is absent — to an
+          # empty string so Diatreme decides the bump from commits; patch/minor/major
+          # force that level. To force a staging rc bump, run this workflow from the
+          # `staging` branch ("Use workflow from" -> staging) with bump=patch|minor|major.
+          force-bump: ${{ github.event.inputs.bump != 'auto' && github.event.inputs.bump || '' }}
